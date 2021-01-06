@@ -33,6 +33,17 @@
             <artifactId>hutool-all</artifactId>
             <version>5.5.6</version>
         </dependency>
+<!--        解决环境切换配置文件中@@变量错误-->
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+            <version>1.26</version>
+        </dependency>
+        <dependency>
+            <groupId>cn.hutool</groupId>
+            <artifactId>hutool-all</artifactId>
+            <version>5.5.6</version>
+        </dependency>
     </dependencies>
 
     <pluginRepositories>
@@ -62,11 +73,43 @@
         </repository>
     </repositories>
 
+    <build>
+        <finalName>${project.name}</finalName>
+        <!--        指定变量文件-->
+        <filters>
+            <filter>src/main/resources/config/application-${profiles.active}.properties</filter>
+        </filters>
+        <!-- 资源打包 -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+            </resource>
+            <resource>
+                <directory>src/main/resources/</directory>
+                <!-- 打包时先排除掉三个文件夹 -->
+                <excludes>
+                    <exclude>dev/*</exclude>
+                    <exclude>prod/*</exclude>
+                    <exclude>test/*</exclude>
+                </excludes>
+            </resource>
+            <resource>
+                <!-- 这里是关键！根据不同的环境，把对应文件夹里的配置文件打包 -->
+                <directory>src/main/resources/${profiles.active}</directory>
+            </resource>
+        </resources>
+    </build>
 
+    <!--可以看到定义了多个 profile，每个 profile 都有唯一的 id，也包含 properties 属性。
+    这里为每个 profile 都定义一个名为 profiles.active 的 properties，每个环境的值不同。
+    当我们打包项目时，激活不同的环境，profiles.active 字段就会被赋予不同的值。-->
     <profiles>
         <profile>
+            <!-- 不同环境Profile的唯一id -->
             <id>dev</id>
             <properties>
+                <!-- profiles.active 是自定义的字段（名字随便起），自定义字段可以有多个 -->
                 <!-- 环境标识，需要与配置文件的名称相对应 -->
                 <profiles.active>dev</profiles.active>
             </properties>

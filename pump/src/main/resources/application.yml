@@ -1,2 +1,9 @@
 server:
   port: 8090
+spring:
+  profiles:
+    #springBoot中maven变量的使用https://juejin.cn/post/6844904185557680142
+    active: @profiles.active@
+api:
+  key: @api.key@
+  secret: @api.secret@
