@@ -2,13 +2,16 @@ package ml.hfer.binance.pumping.controller;
 
 import cn.hutool.crypto.digest.HMac;
 import cn.hutool.crypto.digest.HmacAlgorithm;
+import cn.hutool.extra.ssh.JschUtil;
 import cn.hutool.http.HttpRequest;
 import cn.hutool.http.HttpUtil;
 import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import ml.hfer.binance.pumping.constant.SideENUM;
+import ml.hfer.binance.pumping.pojo.OrderBook;
 import ml.hfer.binance.pumping.pojo.PumpReq;
+import ml.hfer.binance.pumping.pojo.RetMsg;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.bind.annotation.*;
 import sun.security.krb5.internal.KdcErrException;
@@ -32,30 +35,44 @@ public class PumpController {
     private String realApiSecret = "lacZn0wDCaIfNnTI5qeqLqn2AyGYeofdMfEMQbiOadU2aclbmsUa4Ke7JOdZ6bJo";
 
     /**
-     * @param paramMap
+     * @param
      * @return
      */
     @RequestMapping("/start")
     @ResponseBody
-    public String pump(@RequestBody PumpReq paramMap) {
-        String symbol = paramMap.getSymbol() + "USDT";
+    public String pump(PumpReq req) {
 
-        long l = System.currentTimeMillis();
+        String symbol = req.getSymbol() + "USDT";
+        List<Integer> precision = getPrecision(symbol);
         //真实市场价
-        String url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=2";
+        String url = "https://api.binance.com/api/v3/klines?symbol=" + req.getSymbol() + "USDT&interval=15m&limit=3";
         String rs = proxyGet(url);
-
         JSONArray jsonArray = JSONUtil.parseArray(rs);
         List firstData = (List) jsonArray.get(0);
         String priceOfStart = (String) firstData.get(1);
-        BigDecimal priceOfStartBig = new BigDecimal(priceOfStart);
-        BigDecimal orderPrice = priceOfStartBig.multiply(new BigDecimal("1.3"));
-        BigDecimal quantity = new BigDecimal("99999");
+        BigDecimal priceOfStartBig = new BigDecimal(priceOfStart).stripTrailingZeros();
+        BigDecimal buyPrice = priceOfStartBig.multiply(new BigDecimal("1.3")).setScale(priceOfStartBig.scale(), BigDecimal.ROUND_HALF_UP);
 
-        String newOrderRes = newOrder("TRBUSDT", new BigDecimal("25.00000000"), new BigDecimal("10"), SideENUM.SELL);
-        long spendTimes = System.currentTimeMillis() - l;
-        return Long.valueOf(spendTimes).toString();
+        BigDecimal quantity = new BigDecimal("0.01669739");
 
+        String newOrderRet = newOrder(symbol, buyPrice, new BigDecimal("10"), SideENUM.SELL);
+
+        //下单结果判断
+        boolean buyIs = newOrderRet.contains("my_order_id_buy");
+        if (buyIs) {//买单成功
+            BigDecimal sellPrice = priceOfStartBig.multiply(new BigDecimal("3")).setScale(priceOfStartBig.scale(), BigDecimal.ROUND_HALF_UP);
+            String sellRes = newOrder(symbol, sellPrice, new BigDecimal("10"), SideENUM.SELL);
+        }
+
+
+        return "done";
+    }
+
+    private List<Integer> getPrecision(String symbol) {
+        String url = "https://api.binance.com/api/v3/ticker/bookTicker?symbol=DLTBTC";
+        String rs = proxyGet(url);
+        OrderBook orderBook = JSONUtil.toBean(rs, OrderBook.class);
+        return null;
     }
 
 
@@ -70,8 +87,8 @@ public class PumpController {
                 "&side=" + side + "&type=LIMIT&timeInForce=GTC&" +
                 "quantity=" + quantity + "&" +
                 "price=" + price + "&" +
-                "newClientOrderId=my_order_id_1&" +
-                "newOrderRespType=FULL&" +
+                "newClientOrderId=my_order_id_buy&" +
+                "newOrderRespType=ACK&" +
                 "timestamp=" + timestamp;
         String allUrl = endPoint + uri + "&signature=" + hMac.digestHex(uri);
         String body = proxyPost(allUrl);
