@@ -8,6 +8,8 @@ import cn.hutool.json.JSONUtil;
 import ml.hfer.binance.pumping.constant.SideENUM;
 import ml.hfer.binance.pumping.pojo.OrderBook;
 import ml.hfer.binance.pumping.pojo.PumpReq;
+import ml.hfer.binance.pumping.pojo.RetMsg;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -21,11 +23,16 @@ import java.util.List;
 @RequestMapping("/pump")
 public class PumpController {
 
-    private String apiKey = "ZWxnK5njqIfRqyu6xy5rTTSVo1NPY2YBhpkoFe0ACvGfhmNhbgiLbUyVkjgkAC3M";
-    private String realApiKey = "Lt4XxauFXZh3LUMh92eOqg8HlxXKKYCqvGeCJNEg9xoaRHPwps2jZ6HB1m29CVx2";
+    @Value("${api.key}")
+    private String realApiKey = "none";
 
-    private String apiSecret = "hKQYyOGfptgSo9tbs6FuVhPJpDFQwkXMO7MdW48BnWlTt2neiKJVNLFKyGAu4jEc";
-    private String realApiSecret = "lacZn0wDCaIfNnTI5qeqLqn2AyGYeofdMfEMQbiOadU2aclbmsUa4Ke7JOdZ6bJo";
+    @Value("${api.secret}")
+    private String realApiSecret = "none";
+
+    private String ip = "127.0.0.1";
+    private int port = 1080;
+
+    private String btcBalance = "0.01669739";
 
     /**
      * @param
@@ -35,26 +42,48 @@ public class PumpController {
     @ResponseBody
     public String pump(PumpReq req) {
 
-        String symbol = req.getSymbol() + "USDT";
-        List<Integer> precision = getPrecision(symbol);
+        String symbol = req.getBase() + req.getQuote();
+
+//        List<Integer> precision = getPrecision(symbol);
         //真实市场价
-        String url = "https://api.binance.com/api/v3/klines?symbol=" + req.getSymbol() + "USDT&interval=15m&limit=3";
+        String url = "https://api.binance.com/api/v3/klines?symbol=" + symbol + "&interval=15m&limit=3";
         String rs = proxyGet(url);
         JSONArray jsonArray = JSONUtil.parseArray(rs);
         List firstData = (List) jsonArray.get(0);
-        String priceOfStart = (String) firstData.get(1);
-        BigDecimal priceOfStartBig = new BigDecimal(priceOfStart).stripTrailingZeros();
-        BigDecimal buyPrice = priceOfStartBig.multiply(new BigDecimal("1.3")).setScale(priceOfStartBig.scale(), BigDecimal.ROUND_HALF_UP);
+        String priceOfStart = (String) firstData.get(1);//开盘价
+        String volume = (String) firstData.get(5);//成交量
 
-        BigDecimal quantity = new BigDecimal("0.01669739");
 
-        String newOrderRet = newOrder(symbol, buyPrice, new BigDecimal("10"), SideENUM.SELL);
+        BigDecimal priceOfStripZeros = new BigDecimal(priceOfStart).stripTrailingZeros();
+        BigDecimal buyPrice = priceOfStripZeros.multiply(new BigDecimal(req.getMulti())).setScale(priceOfStripZeros.scale(), BigDecimal.ROUND_HALF_UP);
 
+        BigDecimal volumeOfStripZeros = new BigDecimal(volume).stripTrailingZeros();
+        BigDecimal quantity = new BigDecimal(btcBalance).divide(buyPrice, volumeOfStripZeros.scale(), BigDecimal.ROUND_DOWN);
+
+        String newOrderRet = null;
+        boolean stop = false;
+        while (!stop) {
+            newOrderRet = newOrder(symbol, buyPrice, quantity, SideENUM.SELL);
+            RetMsg retMsg = JSONUtil.toBean(newOrderRet, RetMsg.class);
+            if (retMsg.getCode() != 0) {
+                System.out.println("1.请求失败：" + retMsg);
+                if (retMsg.getCode() == 429) {
+                    return "失败请求已超限";
+                }
+            }
+            if (newOrderRet.contains("my_order_id_buy")) {
+                stop = true;
+            }
+        }
+        System.out.println("买入" + symbol + ":\n响应:" + newOrderRet);
         //下单结果判断
         boolean buyIs = newOrderRet.contains("my_order_id_buy");
-        if (buyIs) {//买单成功
-            BigDecimal sellPrice = priceOfStartBig.multiply(new BigDecimal("3")).setScale(priceOfStartBig.scale(), BigDecimal.ROUND_HALF_UP);
-            String sellRes = newOrder(symbol, sellPrice, new BigDecimal("10"), SideENUM.SELL);
+        if (buyIs) {//下单成功
+            BigDecimal sellPrice = priceOfStripZeros.multiply(new BigDecimal("3")).setScale(priceOfStripZeros.scale(), BigDecimal.ROUND_HALF_UP);
+            String sellRes = newOrder(symbol, sellPrice, quantity, SideENUM.SELL);
+        } else {//下单失败
+            String newOrderRet2 = newOrder(symbol, buyPrice, quantity, SideENUM.SELL);
+            System.out.println("买入" + symbol + ":\n响应:" + newOrderRet2);
         }
 
 
@@ -90,16 +119,12 @@ public class PumpController {
 
 
     String proxyGet(String url) {
-        String ip = "127.0.0.1";
-        int port = 1080;
         Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(ip, port));
         String body = HttpRequest.get(url).setProxy(proxy).execute().body();
         return body;
     }
 
     String proxyPost(String url) {
-        String ip = "127.0.0.1";
-        int port = 1080;
         Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(ip, port));
         String body = HttpRequest.post(url).header("X-MBX-APIKEY", realApiKey).setProxy(proxy).execute().body();
         return body;

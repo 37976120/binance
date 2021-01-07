@@ -11,7 +11,11 @@ import java.math.BigDecimal;
 @Data
 public class PumpReq {
 
-    private String symbol;
+    private String quote;
+
+    private String multi;
+
+    private String base;
 
     private String listClientOrderId;
 
