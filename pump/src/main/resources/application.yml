@@ -4,6 +4,13 @@ spring:
   profiles:
     #springBoot中maven变量的使用https://juejin.cn/post/6844904185557680142
     active: @profiles.active@
+  redis:
+    host: ovms-redis
+    port: 6379
 api:
   key: @api.key@
   secret: @api.secret@
+
+base:
+  endpoint: @base.endpoint@
+

@@ -44,4 +44,8 @@ public class PumpReq {
     private Long recvWindow;
 
     private Long timestamp;
+
+    private String btcBalance;
+
+    private String idPrefix;
 }
