@@ -6,33 +6,19 @@ import cn.hutool.http.HttpRequest;
 import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONUtil;
 import ml.hfer.binance.pumping.constant.SideENUM;
+import ml.hfer.binance.pumping.pojo.Account;
+import ml.hfer.binance.pumping.pojo.CoinInfo;
 import ml.hfer.binance.pumping.pojo.OrderBook;
 import ml.hfer.binance.pumping.pojo.PumpReq;
-import ml.hfer.binance.pumping.pojo.RetMsg;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpHost;
 import org.apache.http.HttpResponse;
-import org.apache.http.NameValuePair;
-import org.apache.http.client.HttpClient;
 import org.apache.http.client.config.RequestConfig;
-import org.apache.http.client.entity.UrlEncodedFormEntity;
-import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
-import org.apache.http.client.methods.HttpPost;
-import org.apache.http.conn.params.ConnRoutePNames;
-import org.apache.http.conn.ssl.NoopHostnameVerifier;
-import org.apache.http.conn.ssl.TrustStrategy;
 import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.impl.client.HttpClients;
-import org.apache.http.message.BasicNameValuePair;
-import org.apache.http.protocol.HTTP;
-import org.apache.http.ssl.SSLContextBuilder;
 import org.apache.http.util.EntityUtils;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.util.CollectionUtils;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -41,18 +27,12 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
-import java.security.KeyManagementException;
-import java.security.KeyStoreException;
-import java.security.NoSuchAlgorithmException;
-import java.security.cert.CertificateException;
-import java.security.cert.X509Certificate;
-import java.util.ArrayList;
+import java.text.NumberFormat;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/pump")
@@ -164,7 +144,7 @@ public class BinancePumpController {
         String endPoint = baseEndpoint + "/api/v3/order?";
         String uri = "symbol=" + symbol +
                 "&side=" + side + "&type=LIMIT&timeInForce=GTC&" +
-                "quantity=" + quantity + "&" +
+                "quantity=" + quantity.toPlainString() + "&" +
                 "price=" + price + "&" +
                 "newClientOrderId=" + newClientOrderId + "&" +
                 "newOrderRespType=ACK&" +
@@ -176,7 +156,7 @@ public class BinancePumpController {
 
     String proxyGet(String url) {
         Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(ip, port));
-        String body = HttpRequest.get(url).setProxy(proxy).execute().body();
+        String body = HttpRequest.get(url).header("X-MBX-APIKEY", realApiKey).setProxy(proxy).execute().body();
         return body;
     }
 
@@ -287,6 +267,45 @@ public class BinancePumpController {
         for (int i = 0; i < protocols.length; i++) {
             System.out.println(" " + protocols[i]);
         }
+    }
 
+
+    @RequestMapping("/clearStock")
+    public String sellCurrentPumpStock(PumpReq req) {
+        byte[] apikeyOnBytes = realApiSecret.getBytes();
+        HMac hMac = new HMac(HmacAlgorithm.HmacSHA256, apikeyOnBytes);
+
+        String symbol = req.getBase() + req.getQuote();
+        String uri = "timestamp=" + System.currentTimeMillis();
+        String accountInfo = proxyGet(baseEndpoint + "/api/v3/account?" + uri
+                + "&signature=" + hMac.digestHex(uri));
+        Account account = JSONUtil.toBean(accountInfo, Account.class);
+        List<CoinInfo> collect = account.getBalances().stream().filter(item -> item.getAsset().equals(req.getQuote()))
+                .collect(Collectors.toList());
+        CoinInfo coinInfo = collect.get(0);
+        String stockStr = coinInfo.getFree().toPlainString();
+
+
+        String url = "https://api.binance.com/api/v3/klines?symbol=" + symbol + "&interval=5m&limit=2";
+        String rs = proxyGet(url);
+        JSONArray jsonArray = JSONUtil.parseArray(rs);
+        List firstData = (List) jsonArray.get(0);
+        String priceOfStart = (String) firstData.get(1);//开盘价
+        String volume = (String) firstData.get(5);//成交量
+
+        BigDecimal priceOfStripZeros = new BigDecimal(priceOfStart).stripTrailingZeros();
+        BigDecimal sellPrice1 = priceOfStripZeros.multiply(new BigDecimal("2")).setScale(priceOfStripZeros.scale(), BigDecimal.ROUND_HALF_UP);
+
+        BigDecimal volumeOfStripZeros = new BigDecimal(volume).stripTrailingZeros();
+        BigDecimal quantity = new BigDecimal(stockStr).stripTrailingZeros();
+
+//        NumberFormat nf = NumberFormat.getInstance();
+////        nf.setMaximumFractionDigits(7);//设置保留多少位小数
+//        nf.setGroupingUsed(false);//取消科学计数法
+//        String format = nf.format(coinInfo.getFree());
+
+        String sellRes1 = newOrder(symbol, sellPrice1, new BigDecimal(stockStr), SideENUM.SELL
+                , req.getIdPrefix() + "hfer_sell_01");
+        return accountInfo;
     }
 }
