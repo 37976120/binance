@@ -2,6 +2,8 @@ package ml.hfer.binance.pumping.pojo;
 
 import lombok.Data;
 
+import java.util.List;
+
 @Data
 public class OrderBook {
 
@@ -12,5 +14,7 @@ public class OrderBook {
 
     private String askQty;
     private String askPrice;
+
+    private List<List<String>> asks;
 
 }

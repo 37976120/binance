@@ -48,7 +48,8 @@ public class BinancePumpController {
     private String baseEndpoint = "none";
 
     private String ip = "127.0.0.1";
-    private int port = 1080;
+    //        private int port = 1080;
+    private int port = 7890;
 
     private String btcBalance = "0.01";
 
@@ -60,35 +61,42 @@ public class BinancePumpController {
     @RequestMapping("/start")
     @ResponseBody
     public String pump(PumpReq req) {
-//        System.setProperty("https.protocols", "TLSv1,TLSv1.1,TLSv1.2");
-
         String symbol = req.getBase() + req.getQuote();
 
-//        List<Integer> precision = getPrecision(symbol);
-        //real market price
-        String url = "https://api.binance.com/api/v3/klines?symbol=" + symbol + "&interval=5m&limit=2";
+        String url = "https://api.binance.com/api/v3/klines?symbol=" + symbol + "&interval=1m&limit=1";
         String rs = proxyGet(url);
         JSONArray jsonArray = JSONUtil.parseArray(rs);
         List firstData = (List) jsonArray.get(0);
         String priceOfStart = (String) firstData.get(1);//开盘价
         String volume = (String) firstData.get(5);//成交量
-
-
         BigDecimal priceOfStripZeros = new BigDecimal(priceOfStart).stripTrailingZeros();
-        BigDecimal buyPrice = priceOfStripZeros.multiply(new BigDecimal(req.getMulti())).setScale(priceOfStripZeros.scale(), BigDecimal.ROUND_HALF_UP);
-        BigDecimal sellPrice1 = priceOfStripZeros.multiply(new BigDecimal("3")).setScale(priceOfStripZeros.scale(), BigDecimal.ROUND_HALF_UP);
-        BigDecimal sellPrice2 = priceOfStripZeros.multiply(new BigDecimal("3.5")).setScale(priceOfStripZeros.scale(), BigDecimal.ROUND_HALF_UP);
-        BigDecimal sellPrice3 = priceOfStripZeros.multiply(new BigDecimal("4")).setScale(priceOfStripZeros.scale(), BigDecimal.ROUND_HALF_UP);
 
+//        List<String> book = getNewPrice(symbol);
+//        BigDecimal bookPrice = new BigDecimal(book.get(0)).stripTrailingZeros();
+        BigDecimal buyPrice = priceOfStripZeros.multiply(new BigDecimal(req.getMulti())).setScale(priceOfStripZeros.scale(), BigDecimal.ROUND_HALF_UP);
+        BigDecimal sellPrice1 = priceOfStripZeros.multiply(new BigDecimal("1.5")).setScale(priceOfStripZeros.scale(), BigDecimal.ROUND_HALF_UP);
+        BigDecimal sellPrice2 = priceOfStripZeros.multiply(new BigDecimal("1.8")).setScale(priceOfStripZeros.scale(), BigDecimal.ROUND_HALF_UP);
+        BigDecimal sellPrice3 = priceOfStripZeros.multiply(new BigDecimal("2")).setScale(priceOfStripZeros.scale(), BigDecimal.ROUND_HALF_UP);
 
         BigDecimal volumeOfStripZeros = new BigDecimal(volume).stripTrailingZeros();
         BigDecimal quantity = new BigDecimal(req.getBtcBalance()).divide(buyPrice, volumeOfStripZeros.scale(), BigDecimal.ROUND_DOWN);
 
-        String newBuyOrderRs = newOrder(symbol, buyPrice, quantity, SideENUM.BUY, req.getIdPrefix() + "hfer_buy_01");
-        System.out.println("【BUY-RESULT】" + newBuyOrderRs);
+        boolean stop = false;
+        int count = 0;
+        String newBuyOrderRs = null;
+        while (!stop) {
+            newBuyOrderRs = newOrder(symbol, buyPrice, quantity, SideENUM.BUY
+                    , req.getIdPrefix() + "hfer_buy_01");
+            System.out.println("【BUY-RESULT】" + newBuyOrderRs);
+            if (newBuyOrderRs.contains(req.getIdPrefix() + "hfer_buy_01")) {
+                break;
+            }
+            if (++count > 10) {
+                break;
+            }
+        }
+
         //TODO 默认成功
-//
-//
 //        String buyOrderRs = null;
 //        boolean stop = false;
 //        long critimes = 0;
@@ -113,18 +121,33 @@ public class BinancePumpController {
 //                return "最终失败";
 //            }
 //        }
-//        System.out.println("买入" + symbol + ":\n响应:" + buyOrderRs);
+
+        //TODO 检查当前定单是否完成，然后卖出！！！
+        boolean orderFilled = false;
+        while (!orderFilled) {
+            List currentOpenOrder = getCurrentOpenOrder(symbol);
+            if (currentOpenOrder.size() == 0) {
+                break;
+            } else {
+                System.out.println("【CurrentOrder:】" + currentOpenOrder.get(0));
+            }
+            try {
+                Thread.sleep(30);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
         String sellRes1 = newOrder(symbol, sellPrice1, quantity.multiply(new BigDecimal("0.5")).setScale(volumeOfStripZeros.scale(), BigDecimal.ROUND_DOWN), SideENUM.SELL
                 , req.getIdPrefix() + "hfer_sell_01");
         System.out.println("【SELL-RESULT1】:" + sellRes1);
-        String sellRes2 = newOrder(symbol, sellPrice2, quantity.multiply(new BigDecimal("0.3").setScale(volumeOfStripZeros.scale(), BigDecimal.ROUND_DOWN)), SideENUM.SELL
+        String sellRes2 = newOrder(symbol, sellPrice2, quantity.multiply(new BigDecimal("0.3")).setScale(volumeOfStripZeros.scale(), BigDecimal.ROUND_DOWN), SideENUM.SELL
                 , req.getIdPrefix() + "hfer_sell_02");
         System.out.println("【SELL-RESULT2】:" + sellRes2);
-        String sellRes3 = newOrder(symbol, sellPrice3, quantity.multiply(new BigDecimal("0.2").setScale(volumeOfStripZeros.scale(), BigDecimal.ROUND_DOWN)), SideENUM.SELL
+        String sellRes3 = newOrder(symbol, sellPrice3, quantity.multiply(new BigDecimal("0.2")).setScale(volumeOfStripZeros.scale(), BigDecimal.ROUND_DOWN), SideENUM.SELL
                 , req.getIdPrefix() + "hfer_sell_03");
         System.out.println("【SELL-RESULT3】:" + sellRes3);
 
-        return "done";
+        return newBuyOrderRs;
     }
 
     private List<Integer> getPrecision(String symbol) {
@@ -138,7 +161,6 @@ public class BinancePumpController {
     String newOrder(String symbol, BigDecimal price, BigDecimal quantity, SideENUM side, String newClientOrderId) {
         //真实市场价
         //symbol,side,price,
-        long timestamp = System.currentTimeMillis();
         byte[] apikeyOnBytes = realApiSecret.getBytes();
         HMac hMac = new HMac(HmacAlgorithm.HmacSHA256, apikeyOnBytes);
         String endPoint = baseEndpoint + "/api/v3/order?";
@@ -148,7 +170,7 @@ public class BinancePumpController {
                 "price=" + price + "&" +
                 "newClientOrderId=" + newClientOrderId + "&" +
                 "newOrderRespType=ACK&" +
-                "timestamp=" + timestamp;
+                "timestamp=" + System.currentTimeMillis();
         String allUrl = endPoint + uri + "&signature=" + hMac.digestHex(uri);
         String body = proxyPost(allUrl);
         return body;
@@ -276,14 +298,14 @@ public class BinancePumpController {
         HMac hMac = new HMac(HmacAlgorithm.HmacSHA256, apikeyOnBytes);
 
         String symbol = req.getBase() + req.getQuote();
+
         String uri = "timestamp=" + System.currentTimeMillis();
         String accountInfo = proxyGet(baseEndpoint + "/api/v3/account?" + uri
                 + "&signature=" + hMac.digestHex(uri));
         Account account = JSONUtil.toBean(accountInfo, Account.class);
-        List<CoinInfo> collect = account.getBalances().stream().filter(item -> item.getAsset().equals(req.getQuote()))
+        List<CoinInfo> collect = account.getBalances().stream().filter(item -> item.getAsset().equals(req.getBase()))
                 .collect(Collectors.toList());
-        CoinInfo coinInfo = collect.get(0);
-        String stockStr = coinInfo.getFree().toPlainString();
+        BigDecimal stock = collect.get(0).getFree();
 
 
         String url = "https://api.binance.com/api/v3/klines?symbol=" + symbol + "&interval=5m&limit=2";
@@ -292,20 +314,37 @@ public class BinancePumpController {
         List firstData = (List) jsonArray.get(0);
         String priceOfStart = (String) firstData.get(1);//开盘价
         String volume = (String) firstData.get(5);//成交量
+        BigDecimal volumeOfStripZeros = new BigDecimal(volume).stripTrailingZeros();
 
         BigDecimal priceOfStripZeros = new BigDecimal(priceOfStart).stripTrailingZeros();
         BigDecimal sellPrice1 = priceOfStripZeros.multiply(new BigDecimal("2")).setScale(priceOfStripZeros.scale(), BigDecimal.ROUND_HALF_UP);
-
-        BigDecimal volumeOfStripZeros = new BigDecimal(volume).stripTrailingZeros();
-        BigDecimal quantity = new BigDecimal(stockStr).stripTrailingZeros();
-
 //        NumberFormat nf = NumberFormat.getInstance();
 ////        nf.setMaximumFractionDigits(7);//设置保留多少位小数
 //        nf.setGroupingUsed(false);//取消科学计数法
 //        String format = nf.format(coinInfo.getFree());
-
-        String sellRes1 = newOrder(symbol, sellPrice1, new BigDecimal(stockStr), SideENUM.SELL
+        String sellRes1 = newOrder(symbol, sellPrice1, stock.setScale(volumeOfStripZeros.scale(), BigDecimal.ROUND_DOWN), SideENUM.SELL
                 , req.getIdPrefix() + "hfer_sell_01");
+        System.out.println("[清仓]：" + sellRes1);
         return accountInfo;
+    }
+
+
+    public List getCurrentOpenOrder(String symbol) {
+        byte[] apikeyOnBytes = realApiSecret.getBytes();
+        HMac hMac = new HMac(HmacAlgorithm.HmacSHA256, apikeyOnBytes);
+        String uri = "symbol=" + symbol + "&timestamp=" + System.currentTimeMillis();
+        String url = baseEndpoint + "/api/v3/openOrders?" + uri + "&signature=" + hMac.digestHex(uri);
+        String s = proxyGet(url);
+        JSONArray currOrder = JSONUtil.parseArray(s);
+        return currOrder;
+    }
+
+
+    public List<String> getNewPrice(String symbol) {
+        String url = "https://api.binance.com/api/v3/depth?symbol=" + symbol + "&limit=5";
+        String s = proxyGet(url);
+        OrderBook orderBook = JSONUtil.toBean(s, OrderBook.class);
+        List<String> book = orderBook.getAsks().get(0);
+        return book;
     }
 }
